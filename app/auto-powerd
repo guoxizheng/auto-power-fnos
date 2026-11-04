@@ -92,7 +92,7 @@ def send_wol_mac():
         s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         for dst in ("192.168.50.255", "255.255.255.255"):
             for port in (7, 9):
-                for _ in range(8):
+                for _ in range(4):
                     s.sendto(pkt, (dst, port)); sent += 1; time.sleep(0.02)
         s.close()
     except Exception as e:
@@ -113,8 +113,11 @@ def update_status():
         idle_idx = [i for i, l in enumerate(lines) if l.strip() == "---IDLE---"]
         if idle_idx:
             idx = idle_idx[0]
-            for line in lines[idx+1:]:
-                if line.strip(): STATUS["log"].insert(0, line.strip()); break
+            if len(lines[idx+1:]) > 0:
+                STATUS["log"].insert(0, lines[idx+1:][0].strip())
+            # Limit log size
+            if len(STATUS["log"]) > 50:
+                STATUS["log"] = STATUS["log"][:50]
         LOGGER.info("状态更新成功, boot_id=%s", STATUS["boot_id"])
     else:
         LOGGER.error("查询状态失败 rc=%d", rc)

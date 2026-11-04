@@ -12,8 +12,19 @@ TRIM_PKGVAR = os.environ.get("TRIM_PKGVAR", "/var/apps/auto-power/var")
 TRIM_PKGETC = os.environ.get("TRIM_PKGETC", "/var/apps/auto-power/etc")
 TRIM_APPDEST = os.environ.get("TRIM_APPDEST", "/var/apps/auto-power/target")
 
-os.makedirs(TRIM_PKGVAR, exist_ok=True)
-os.makedirs(TRIM_PKGETC, exist_ok=True)
+# 确保目录存在 (如果目录不可写则 fallback 到 tmp)
+def make_writable(dirpath):
+    try:
+        os.makedirs(dirpath, exist_ok=True)
+        with open(os.path.join(dirpath, ".wtest"), "w") as f:
+            f.write("test")
+        os.remove(os.path.join(dirpath, ".wtest"))
+        return dirpath
+    except (OSError, IOError):
+        return "/tmp/auto-power-data"
+
+TRIM_PKGVAR = make_writable(TRIM_PKGVAR)
+TRIM_PKGETC = make_writable(TRIM_PKGETC)
 
 CONF_FILE = os.path.join(TRIM_PKGETC, "local.conf")
 LOG_FILE = os.path.join(TRIM_PKGVAR, "auto-power.log")
@@ -228,9 +239,11 @@ def init_app():
             src = os.path.join(src_ui, f)
             if os.path.isfile(src):
                 dest = os.path.join(TRIM_APPDEST, "app", "ui", f)
-                if not os.path.exists(dest) or os.path.getmtime(src) > os.path.getmtime(dest):
-                    import shutil; shutil.copy2(src, dest)
-        LOGGER.info("UI Ji Copy")
+                try:
+                    if not os.path.exists(dest) or os.path.getmtime(src) > os.path.getmtime(dest):
+                        import shutil; shutil.copy2(src, dest)
+                except (OSError, IOError) as e: LOGGER.warning("UI copy 失败 (只读): %s", e)
+        LOGGER.info("UI 处理完成")
     if not os.path.exists(CONF_FILE):
         try:
             with open(CONF_FILE, "w") as f:

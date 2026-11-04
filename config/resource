@@ -1,0 +1,6 @@
+{
+  "port-config": {
+    "protocol-file": "auto-power.sc"
+  },
+  "systemd-unit": {}
+}

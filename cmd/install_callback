@@ -1,0 +1,15 @@
+#!/bin/bash
+mkdir -p /var/apps/auto-power/var 2>/dev/null
+mkdir -p /var/apps/auto-power/etc 2>/dev/null
+cat > /var/apps/auto-power/etc/local.conf <<CONF
+remote_host=${wizard_remote_host:-192.168.50.10}
+ssh_user=${wizard_remote_user:-guoxizheng}
+ssh_password=gxz145890
+wol_mac=0c:9d:92:cb:3e:1e
+wol_iface=enp0s31f6
+idle_min_default=${wizard_idle_minutes:-30}
+poll_seconds=10
+CONF
+chmod 644 /var/apps/auto-power/etc/local.conf 2>/dev/null
+echo "=== installed config ==="
+exit 0

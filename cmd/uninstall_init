@@ -1,0 +1,3 @@
+#!/bin/bash
+echo "$(date '+%F %T') [$f] 执行完毕" >> /var/apps/auto-power/var/debug.log 2>/dev/null
+exit 0

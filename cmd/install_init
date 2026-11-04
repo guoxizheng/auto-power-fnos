@@ -1,0 +1,4 @@
+#!/bin/bash
+mkdir -p /var/apps/auto-power/var 2>/dev/null
+mkdir -p /var/apps/auto-power/etc 2>/dev/null
+exit 0

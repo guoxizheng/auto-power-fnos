@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>远程电源管理 | 飞牛NAS</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:linear-gradient(135deg,#667eea 0%,#a282f1 100%);min-height:100vh;padding:20px}
+        .container{max-width:900px;margin:0 auto}
+        .header{text-align:center;color:white;margin-bottom:30px}
+        .header h1{font-size:2rem;margin-bottom:10px}
+        .header p{opacity:0.8}
+        .card{background:white;border-radius:16px;padding:25px;margin-bottom:20px;box-shadow:0 10px 30px rgba(0,0,0,0.15)}
+        .card-title{font-size:1.2rem;font-weight:600;margin-bottom:15px;color:#333;border-left:4px solid #667eea;padding-left:10px}
+        .status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px}
+        .status-item{background:#f8f9fa;padding:15px;border-radius:10px;text-align:center}
+        .status-item .label{color:#666;font-size:0.9rem}
+        .status-item .value{font-size:1.4rem;font-weight:700;color:#333;margin:5px 0}
+        .status-item .value.online{color:#28a745}
+        .status-item .value.offline{color:#dc3545}
+        .btn-group{display:flex;gap:10px;flex-wrap:wrap}
+        .btn{padding:12px 24px;border:none;border-radius:8px;font-size:1rem;cursor:pointer;transition:all 0.3s;font-weight:500}
+        .btn:hover{transform:translateY(-2px);box-shadow:0 5px 15px rgba(0,0,0,0.2)}
+        .btn-primary{background:#667eea;color:white}
+        .btn-success{background:#28a745;color:white}
+        .btn-danger{background:#dc3545;color:white}
+        .btn-info{background:#17a2b8;color:white}
+        .form-group{margin-bottom:15px}
+        .form-group label{display:block;color:#555;margin:0 0 8px 0}
+        .form-group input[type="number"]{width:100%;padding:12px;border:2px solid #e1e5eb;border-radius:8px;font-size:1rem}
+        .form-group input:focus{outline:none;border-color:#667eea}
+        .log-container{background:#1e1e1e;color:#00ff00;padding:15px;border-radius:8px;font-family:"Consolas",monospace;font-size:0.85rem;max-height:300px;overflow-y:auto}
+        .log-container .log-line{margin:3px 0}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>远程电源管理</h1>
+            <p>控制远程主机的休眠与唤醒</p>
+        </div>
+        <div class="card">
+            <div class="card-title">远程主机状态</div>
+            <div class="status-grid">
+                <div class="status-item"><div class="label">连接状态</div><div class="value" id="state-value">检测中...</div></div>
+                <div class="status-item"><div class="label">空闲时间</div><div class="value" id="idle-value">-- 分钟</div></div>
+                <div class="status-item"><div class="label">自动休眠</div><div class="value" id="auto-value">已停止</div></div>
+                <div class="status-item"><div class="label">boot_id</div><div class="value" id="boot-id-value" style="font-size:0.9rem">--</div></div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-title">休眠时间设置</div>
+            <div class="form-group">
+                <label>空闲超过 N 分钟后自动休眠</label>
+                <input type="number" id="idle-minutes" min="1" max="1440" value="30">
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="setIdleMinutes()">应用设置</button>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-title">立即操作</div>
+            <div class="btn-group">
+                <button class="btn btn-danger" onclick="manualHibernate()">立即休眠</button>
+                <button class="btn btn-success" onclick="wakeOnLan()">WOL 恢复</button>
+                <button class="btn btn-info" onclick="checkStatus()">刷新状态</button>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-title">自动电源管理</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0">
+                <div>
+                    <div style="font-size:0.95rem;color:#555;">启用自动休眠/唤醒</div>
+                    <div style="font-size:0.85rem;color:#888;">启用后空闲超时 главных会自动休眠</div>
+                </div>
+                <label class="toggle-switch"><input type="checkbox" id="auto-toggle" onchange="toggleAuto(this.checked)"><span class="slider"></span></label>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-title">运行日志</div>
+            <div class="log-container" id="log-container"><div class="log-line">等待数据...</div></div>
+        </div>
+    </div>
+    <script>
+        const API="/api/";
+        async function apiCall(path, params={}){
+            try{
+                const resp=await fetch(path+"?"+new URLSearchParams(params).toString());
+                return await resp.json();
+            }catch(e){return {code:-1,msg:"网络请求失败: "+e.message,data:null}}
+        }
+        async function refreshStatus(){
+            const r=await apiCall("/api/status");
+            if(r.code!==0){return}
+            const s=r.data;
+            const stateEl=document.getElementById("state-value");
+            stateEl.textContent=s.state==="online"?"在线":"离线";
+            stateEl.className="value "+(s.state==="online"?"online":"offline");
+            document.getElementById("boot-id-value").textContent=s.boot_id?s.boot_id.slice(0,8):"--";
+            const l=document.getElementById("log-container");
+            if(s.log&&s.log.length>0){l.innerHTML=s.log.map(line=>`<div class="log-line">${line}</div>`).join("")}
+        }
+        async function setIdleMinutes(){
+            const mins=document.getElementById("idle-minutes").value;
+            const r=await apiCall("/api/set-idle",{minutes:mins});
+            if(r.code===0){alert("设置成功: 空闲 "+mins+" 分钟后自动休眠")}
+            else{alert("设置失败: "+r.msg)}
+        }
+        async function manualHibernate(){
+            if(!confirm("确认要立即休眠远程主机吗？"))return;
+            const r=await apiCall("/api/manual-hibernate");
+            if(r.code===0){alert("休眠指令已发送");setTimeout(refreshStatus,2000)}
+            else alert("休眠失败: "+r.msg);
+        }
+        async function wakeOnLan(){
+            if(!confirm("确认要发送 WOL 魔法包唤醒主机吗？"))return;
+            const r=await apiCall("/api/wol");
+            if(r.code===0&&r.data.packets>0){alert("已发送 "+r.data.packets+" 个魔法包")}
+            else alert("WOL 发送失败");
+        }
+        async function toggleAuto(on){
+            const r=await apiCall("/api/toggle",{on:on?1:0});
+            if(r.code===0){
+                document.getElementById("auto-value").textContent=on?"已启用":"已停止";
+            }else{alert("操作失败: "+r.msg);document.getElementById("auto-toggle").checked=!on}
+        }
+        if(location.hash==="#status")refreshStatus();
+        else setInterval(refreshStatus,5000);
+        window.addEventListener("load",()=>{refreshStatus();setTimeout(()=>refreshStatus(),1000)});
+    </script>
+</body>
+</html>

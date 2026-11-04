@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+飞牛 NAS - 远程电源管理 (auto-power)
+"""
+
+import os, sys, json, time, socket, subprocess, logging
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
+
+TRIM_PKGVAR = os.environ.get("TRIM_PKGVAR", "/var/apps/auto-power/var")
+TRIM_PKGETC = os.environ.get("TRIM_PKGETC", "/var/apps/auto-power/etc")
+TRIM_APPDEST = os.environ.get("TRIM_APPDEST", "/var/apps/auto-power/target")
+
+os.makedirs(TRIM_PKGVAR, exist_ok=True)
+os.makedirs(TRIM_PKGETC, exist_ok=True)
+
+CONF_FILE = os.path.join(TRIM_PKGETC, "local.conf")
+LOG_FILE = os.path.join(TRIM_PKGVAR, "auto-power.log")
+
+DEFAULT_CONFIG = {
+    "remote_host": "192.168.50.10",
+    "ssh_user": "guoxizheng",
+    "ssh_password": "gxz145890",
+    "wol_mac": "0c:9d:92:cb:3e:1e",
+    "wol_iface": "enp0s31f6",
+    "idle_min_default": 30,
+    "poll_seconds": 10,
+}
+
+STATUS = {"state": "unknown", "idle_minutes": None, "auto_on": False, "boot_id": None, "log": [], "server": "ok"}
+
+def setup_logger():
+    logger = logging.getLogger("auto-power")
+    logger.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    try:
+        log_fd = open(LOG_FILE, "a")
+        fd_handler = logging.StreamHandler(log_fd); fd_handler.setFormatter(fmt); logger.addHandler(fd_handler)
+    except (OSError, IOError): pass
+    stream_handler = logging.StreamHandler(sys.stdout); stream_handler.setFormatter(fmt); logger.addHandler(stream_handler)
+    return logger
+LOGGER = setup_logger()
+
+def load_config():
+    conf = dict(DEFAULT_CONFIG)
+    if os.path.exists(CONF_FILE):
+        try:
+            with open(CONF_FILE, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"): continue
+                    if "=" in line:
+                        key, val = line.split("=", 1)
+                        conf[key.strip()] = val.strip()
+        except (OSError, IOError) as e: LOGGER.error("配置加载失败: %s", e)
+    return conf
+CONFIG = load_config()
+
+def save_config(new_conf):
+    global CONFIG
+    CONFIG = dict(new_conf)
+    try:
+        with open(CONF_FILE, "w") as f:
+            for k, v in CONFIG.items(): f.write("%s=%s\n" % (k, v))
+        return True
+    except (OSError, IOError) as e: LOGGER.error("保存配置失败: %s", e); return False
+
+def ssh_exec(cmd, timeout=15):
+    env = os.environ.copy()
+    cmd = "export SSHPASS='%s'; sshpass -e ssh -T -o StrictHostKeyChecking=no " \
+          "-o UserKnownHostsFile=/dev/null -o ConnectTimeout=%d %s@%s '%s'" % (
+              CONFIG["ssh_password"], timeout, CONFIG["ssh_user"], CONFIG["remote_host"], cmd)
+    try:
+        p = subprocess.run(cmd, shell=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout+5)
+        return p.returncode, p.stdout.decode("utf-8", errors="replace"), p.stderr.decode("utf-8", errors="replace")
+    except Exception as e: return (-1, "", str(e))
+
+def exec_local(cmd):
+    try:
+        p = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        return p.returncode, p.stdout, p.stderr
+    except Exception as e: return (-1, b"", str(e))
+
+def send_wol_mac():
+    mac_hex = CONFIG["wol_mac"].replace(":", "")
+    mac_bytes = bytes.fromhex(mac_hex)
+    pkt = b'\xff'*6 + mac_bytes*16
+    sent = 0
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for dst in ("192.168.50.255", "255.255.255.255"):
+            for port in (7, 9):
+                for _ in range(8):
+                    s.sendto(pkt, (dst, port)); sent += 1; time.sleep(0.02)
+        s.close()
+    except Exception as e:
+        LOGGER.error("WOL 发送失败: %s", e); return 0
+    return sent
+
+def update_status():
+    rc, out, err = ssh_exec("cat /proc/sys/kernel/random/boot_id; "
+                            "echo '---UPTIKE---'; uptime -s 2>/dev/null || echo unknown; "
+                            "echo '---WOLE---'; sudo -S -p '' /usr/bin/ethtool enp0s31f6 "
+                            "2>/dev/null | grep -i 'Wake-on' || echo unknown; "
+                            "echo '---IDLE---'; tail -n 3 /var/log/auto-power.log 2>/dev/null;")
+    if rc == 0:
+        lines = out.splitlines()
+        for line in lines:
+            if line and not line.startswith("---"):
+                STATUS["boot_id"] = line; break
+        idle_idx = [i for i, l in enumerate(lines) if l.strip() == "---IDLE---"]
+        if idle_idx:
+            idx = idle_idx[0]
+            for line in lines[idx+1:]:
+                if line.strip(): STATUS["log"].insert(0, line.strip()); break
+        LOGGER.info("状态更新成功, boot_id=%s", STATUS["boot_id"])
+    else:
+        LOGGER.error("查询状态失败 rc=%d", rc)
+
+def set_idle_minutes(mins):
+    rc, out, err = ssh_exec("echo 'gxz145890' | sudo -S -p '' /usr/local/bin/auto-powerctl setidle %s 2>&1" % int(mins))
+    return rc, out
+
+def toggle_auto_power(turn_on):
+    if turn_on:
+        rc, out, err = ssh_exec("echo 'gxz145890' | sudo -S -p '' systemctl start auto-power-idle.service 2>&1; echo 'gxz145890' | sudo -S -p '' systemctl enable auto-power-idle.timer 2>&1")
+    else:
+        rc, out, err = ssh_exec("echo 'gxz145890' | sudo -S -p '' systemctl stop auto-power-idle.service 2>&1; echo 'gxz145890' | sudo -S -p '' systemctl disable auto-power-idle.timer 2>&1")
+    return rc, out
+
+def manual_hibernate():
+    rc, out, err = ssh_exec("echo 'gxz145890' | sudo -S -p '' /usr/local/bin/auto-powerctl hibernow -f 2>&1")
+    return rc, out
+
+def check_remote_online():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(3)
+    result = sock.connect_ex((CONFIG["remote_host"], 22))
+    sock.close()
+    return result == 0
+
+def monitor_thread():
+    global STATUS
+    while True:
+        try:
+            online = check_remote_online()
+            if online:
+                STATUS["state"] = "online"; update_status()
+            else:
+                STATUS["state"] = "offline"
+            time.sleep(CONFIG["poll_seconds"])
+        except Exception as e:
+            LOGGER.error("轮询异常: %s", e); time.sleep(30)
+
+class RequestHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args): LOGGER.debug("HTTP %s - %s", format % args)
+    def do_GET(self):
+        if self.path == "/" or self.path.startswith("/index.html"): self.send_file("index.html", "text/html")
+        elif self.path.startswith("/api/"): self.handle_api()
+        else: self.send_error(404, "Not Found")
+    def do_POST(self): self.handle_api()
+    def send_file(self, filename, content_type):
+       	app_dir = os.path.join(TRIM_APPDEST, "app", "ui")
+       	path = os.path.join(app_dir, filename)
+        if os.path.exists(path):
+            data = open(path, "rb").read()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(data)
+        else: self.send_error(404, "File not found: %s" % path)
+    def handle_api(self):
+        action = self.path.split("/api/")[-1]
+        client_ip = self.client_address[0]
+        LOGGER.info("API 调用: %s from %s", action, client_ip)
+        result = {"code": 0, "msg": "ok", "data": None}
+        if action == "status": result["data"] = STATUS
+        elif action == "manual-hibernate":
+            rc, out = manual_hibernate()
+            result["msg"] = out if rc == 0 else out; result["code"] = rc
+        elif action == "wol":
+            sent = send_wol_mac(); result["data"] = {"packets": sent}
+        elif action == "set-idle":
+            mins = self.get_arg("minutes")
+            if mins and 1 <= int(mins) <= 1440:
+                rc, out = set_idle_minutes(mins); result["code"] = rc; result["msg"] = out
+            else:
+                result["code"] = 1; result["msg"] = "请输入 1-1440 之间的分钟数"
+        elif action == "toggle":
+            on = self.get_arg("on"); rc, out = toggle_auto_power(on == "1"); result["code"] = rc; result["msg"] = out
+        elif action == "check": result["data"] = {"online": check_remote_online()}
+        else:
+            result["code"] = 1; result["msg"] = " unknown action: %s" % action
+        self.send_json(result)
+    def get_arg(self, name):
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode("utf-8", errors="replace")
+        if body: data = dict(p.split("=", 1) for p in body.split("&") if "=" in p)
+        else:
+            data = {}
+            if "?" in self.path:
+                qs = self.path.split("?", 1)[1]
+                data = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        return data.get(name)
+    def send_json(self, data):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(json.dumps(data).encode())))
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode("utf-8"))
+
+def init_app():
+    os.makedirs(TRIM_PKGVAR, exist_ok=True)
+    os.makedirs(TRIM_PKGETC, exist_ok=True)
+    os.makedirs(os.path.join(TRIM_APPDEST, "app", "ui"), exist_ok=True)
+    src_ui = "/vol2/@appshare/Harness/deepseek/auto-power/app/ui"
+    if os.path.exists(src_ui):
+        for f in os.listdir(src_ui):
+            src = os.path.join(src_ui, f)
+            if os.path.isfile(src):
+                dest = os.path.join(TRIM_APPDEST, "app", "ui", f)
+                if not os.path.exists(dest) or os.path.getmtime(src) > os.path.getmtime(dest):
+                    import shutil; shutil.copy2(src, dest)
+        LOGGER.info("UI Ji Copy")
+    if not os.path.exists(CONF_FILE):
+        try:
+            with open(CONF_FILE, "w") as f:
+                for k, v in CONFIG.items(): f.write("%s=%s\n" % (k, v))
+            LOGGER.info("配置文件已创建")
+        except (OSError, IOError) as e: LOGGER.error("创建配置失败: %s", e)
+
+def main():
+    init_app()
+    LOGGER.info("应用启动: 远程电源管理 v1.0.0")
+    LOGGER.info("远程主机: %s:%s", CONFIG["remote_host"], "22")
+    status = {"code": 0, "msg": "ok", "data": STATUS}
+    t = Thread(target=monitor_thread, daemon=True)
+    t.start()
+    port = int(os.getenv("AUTO_POWER_PORT", "8465"))
+    httpd = HTTPServer(("0.0.0.0", port), RequestHandler)
+    LOGGER.info("Web UI 就绪: http://0.0.0.0:%d", port)
+    httpd.serve_forever()
+
+if __name__ == "__main__":
+    main()

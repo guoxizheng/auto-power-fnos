@@ -1,0 +1,21 @@
+# Build artifacts (re-generated, do not commit)
+*.fpk
+*.tgz
+*app.tgz
+
+# IDE / editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temp
+/tmp/

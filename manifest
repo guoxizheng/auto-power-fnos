@@ -1,0 +1,14 @@
+appname               = auto-power
+version               = 1.0.0
+display_name          = 远程电源管理
+platform              = x86
+source                = thirdparty
+maintainer            = Guoxizheng
+maintainer_url        = https://github.com/xiaoqi
+distributor           = Guoxizheng
+desktop_uidir         = ui
+desktop_applaunchname = auto-power.Application
+service_port          = 8465
+ctl_stop              = true
+desc                  = 远程电源管理软件：支持自动休眠/WOL唤醒/手动控制/状态监控，可通过Web UI管理远程主机
+changelog             = 初始化版本

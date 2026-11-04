@@ -177,7 +177,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
         else: self.send_error(404, "File not found: %s" % path)
     def handle_api(self):
-        action = self.path.split("/api/")[-1]
+        action = self.path.split("/api/")[-1].split("?")[0]
         client_ip = self.client_address[0]
         LOGGER.info("API 调用: %s from %s", action, client_ip)
         result = {"code": 0, "msg": "ok", "data": None}
@@ -202,7 +202,8 @@ class RequestHandler(BaseHTTPRequestHandler):
     def get_arg(self, name):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode("utf-8", errors="replace")
-        if body: data = dict(p.split("=", 1) for p in body.split("&") if "=" in p)
+        if body:
+            data = dict(p.split("=", 1) for p in body.split("&") if "=" in p)
         else:
             data = {}
             if "?" in self.path:

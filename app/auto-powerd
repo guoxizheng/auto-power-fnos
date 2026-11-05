@@ -8,6 +8,9 @@ import os, sys, json, time, socket, subprocess, logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
+# fnOS 生命周期脚本的 PATH 受限, 显式补充
+os.environ["PATH"] = "/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin" + os.pathsep + os.environ.get("PATH", "")
+
 TRIM_PKGVAR = os.environ.get("TRIM_PKGVAR", "/var/apps/auto-power/var")
 TRIM_PKGETC = os.environ.get("TRIM_PKGETC", "/var/apps/auto-power/etc")
 TRIM_APPDEST = os.environ.get("TRIM_APPDEST", "/var/apps/auto-power/target")
@@ -113,7 +116,7 @@ def send_wol_mac():
 def update_status():
     rc, out, err = ssh_exec("cat /proc/sys/kernel/random/boot_id; "
                             "echo '---UPTIKE---'; uptime -s 2>/dev/null || echo unknown; "
-                            "echo '---WOLE---'; sudo -S -p '' /usr/bin/ethtool enp0s31f6 "
+                            "echo '---WOLE---'; sudo -S /usr/bin/ethtool enp0s31f6 "
                             "2>/dev/null | grep -i 'Wake-on' || echo unknown; "
                             "echo '---IDLE---'; tail -n 3 /var/log/auto-power.log 2>/dev/null;")
     if rc == 0:
@@ -134,18 +137,18 @@ def update_status():
         LOGGER.error("查询状态失败 rc=%d", rc)
 
 def set_idle_minutes(mins):
-    rc, out, err = ssh_exec("echo 'gxz145890' | sudo -S -p '' /usr/local/bin/auto-powerctl setidle %s 2>&1" % int(mins))
+    rc, out, err = ssh_exec("echo 'gxz145890' | sudo -S /usr/local/bin/auto-powerctl setidle %s 2>&1" % int(mins))
     return rc, out
 
 def toggle_auto_power(turn_on):
     if turn_on:
-        rc, out, err = ssh_exec("echo 'gxz145890' | sudo -S -p '' systemctl start auto-power-idle.service 2>&1; echo 'gxz145890' | sudo -S -p '' systemctl enable auto-power-idle.timer 2>&1")
+        rc, out, err = ssh_exec("echo 'gxz145890' | sudo -S systemctl start auto-power-idle.service 2>&1; echo 'gxz145890' | sudo -S systemctl enable auto-power-idle.timer 2>&1")
     else:
-        rc, out, err = ssh_exec("echo 'gxz145890' | sudo -S -p '' systemctl stop auto-power-idle.service 2>&1; echo 'gxz145890' | sudo -S -p '' systemctl disable auto-power-idle.timer 2>&1")
+        rc, out, err = ssh_exec("echo 'gxz145890' | sudo -S systemctl stop auto-power-idle.service 2>&1; echo 'gxz145890' | sudo -S systemctl disable auto-power-idle.timer 2>&1")
     return rc, out
 
 def manual_hibernate():
-    rc, out, err = ssh_exec("echo 'gxz145890' | sudo -S -p '' /usr/local/bin/auto-powerctl hibernow -f 2>&1")
+    rc, out, err = ssh_exec("echo 'gxz145890' | sudo -S /usr/local/bin/auto-powerctl hibernow -f 2>&1")
     return rc, out
 
 def check_remote_online():
@@ -176,17 +179,20 @@ class RequestHandler(BaseHTTPRequestHandler):
         else: self.send_error(404, "Not Found")
     def do_POST(self): self.handle_api()
     def send_file(self, filename, content_type):
-       	app_dir = os.path.join(TRIM_APPDEST, "app", "ui")
-       	path = os.path.join(app_dir, filename)
-        if os.path.exists(path):
-            data = open(path, "rb").read()
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            self.wfile.write(data)
-        else: self.send_error(404, "File not found: %s" % path)
+        # app.tgz 解压后 UI 在 ${TRIM_APPDEST}/ui/, 兼容两种布局
+        for app_dir in (os.path.join(TRIM_APPDEST, "ui"),
+                        os.path.join(TRIM_APPDEST, "app", "ui")):
+            path = os.path.join(app_dir, filename)
+            if os.path.exists(path):
+                data = open(path, "rb").read()
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(data)
+                return
+        self.send_error(404, "File not found: %s" % filename)
     def handle_api(self):
         action = self.path.split("/api/")[-1].split("?")[0]
         client_ip = self.client_address[0]

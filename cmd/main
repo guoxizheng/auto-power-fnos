@@ -1,4 +1,7 @@
 #!/bin/bash
+# fnOS 生命周期脚本的 PATH 受限, 必须显式设置
+export PATH="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+
 LOG_FILE="${TRIM_PKGVAR}/info.log"
 PID_FILE="${TRIM_PKGVAR}/app.pid"
 APP_SERVER="${TRIM_APPDEST}/auto-powerd"
@@ -20,7 +23,8 @@ start_process() {
     export TRIM_PKGVAR="${TRIM_PKGVAR}"
     export TRIM_PKGETC="${TRIM_PKGETC}"
     export TRIM_APPDEST="${TRIM_APPDEST}"
-    nohup python3 "${APP_SERVER}" >> "${LOG_FILE}" 2>&1 &
+    # 使用绝对路径启动 Python (fnOS 环境 PATH 可能不含 python3)
+    nohup /usr/bin/python3 "${APP_SERVER}" >> "${LOG_FILE}" 2>&1 &
     write_pid=$!
     printf "%s" "$write_pid" > ${PID_FILE}
     log_msg "CMD = python3 ${APP_SERVER}"

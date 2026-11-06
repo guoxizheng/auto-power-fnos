@@ -236,25 +236,19 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data).encode("utf-8"))
 
 def init_app():
-    os.makedirs(TRIM_PKGVAR, exist_ok=True)
-    os.makedirs(TRIM_PKGETC, exist_ok=True)
-    os.makedirs(os.path.join(TRIM_APPDEST, "app", "ui"), exist_ok=True)
-    src_ui = "/vol2/@appshare/Harness/deepseek/auto-power/app/ui"
-    if os.path.exists(src_ui):
-        for f in os.listdir(src_ui):
-            src = os.path.join(src_ui, f)
-            if os.path.isfile(src):
-                dest = os.path.join(TRIM_APPDEST, "app", "ui", f)
-                try:
-                    if not os.path.exists(dest) or os.path.getmtime(src) > os.path.getmtime(dest):
-                        import shutil; shutil.copy2(src, dest)
-                except (OSError, IOError) as e: LOGGER.warning("UI copy 失败 (只读): %s", e)
-        LOGGER.info("UI 处理完成")
+    # 确保数据目录存在 (全部容错, 任何失败都不影响启动)
+    for d in (TRIM_PKGVAR, TRIM_PKGETC):
+        try:
+            os.makedirs(d, exist_ok=True)
+        except (OSError, IOError) as e:
+            LOGGER.warning("目录创建失败(可忽略): %s -> %s", d, e)
+
+    # 创建默认配置 (如果不存在)
     if not os.path.exists(CONF_FILE):
         try:
             with open(CONF_FILE, "w") as f:
                 for k, v in CONFIG.items(): f.write("%s=%s\n" % (k, v))
-            LOGGER.info("配置文件已创建")
+            LOGGER.info("配置文件已创建: %s", CONF_FILE)
         except (OSError, IOError) as e: LOGGER.error("创建配置失败: %s", e)
 
 def main():

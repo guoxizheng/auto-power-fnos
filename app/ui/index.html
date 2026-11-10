@@ -19,6 +19,7 @@
         .status-item .value{font-size:1.4rem;font-weight:700;color:#333;margin:5px 0}
         .status-item .value.online{color:#28a745}
         .status-item .value.offline{color:#dc3545}
+        .status-item .value.warning{color:#e6a817}
         .btn-group{display:flex;gap:10px;flex-wrap:wrap}
         .btn{padding:12px 24px;border:none;border-radius:8px;font-size:1rem;cursor:pointer;transition:all 0.3s;font-weight:500}
         .btn:hover{transform:translateY(-2px);box-shadow:0 5px 15px rgba(0,0,0,0.2)}
@@ -47,6 +48,7 @@
                 <div class="status-item"><div class="label">空闲时间</div><div class="value" id="idle-value">-- 分钟</div></div>
                 <div class="status-item"><div class="label">自动休眠</div><div class="value" id="auto-value">已停止</div></div>
                 <div class="status-item"><div class="label">boot_id</div><div class="value" id="boot-id-value" style="font-size:0.9rem">--</div></div>
+                <div class="status-item"><div class="label">显卡温度</div><div class="value" id="gpu-value">--</div></div>
             </div>
         </div>
         <div class="card">
@@ -98,6 +100,18 @@
             stateEl.textContent=s.state==="online"?"在线":"离线";
             stateEl.className="value "+(s.state==="online"?"online":"offline");
             document.getElementById("boot-id-value").textContent=s.boot_id?s.boot_id.slice(0,8):"--";
+            // 显卡温度 (多卡逐行显示, >=85C 标红, 离线时清空)
+            const gpuEl=document.getElementById("gpu-value");
+            if(s.gpus&&s.gpus.length>0){
+                gpuEl.innerHTML=s.gpus.map(function(g){
+                    const hot=g.temp>=85?"offline":(g.temp>=75?"warning":"online");
+                    return g.temp+"&deg;C ("+g.util+"%)";
+                }).join("<br>");
+                gpuEl.className="value "+(s.gpus.some(g=>g.temp>=85)?"offline":(s.gpus.some(g=>g.temp>=75)?"warning":"online"));
+            } else {
+                gpuEl.textContent=s.state==="online"?"无显卡":"--";
+                gpuEl.className="value";
+            }
             const l=document.getElementById("log-container");
             if(s.log&&s.log.length>0){l.innerHTML=s.log.map(line=>`<div class="log-line">${line}</div>`).join("")}
         }

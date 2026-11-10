@@ -1,5 +1,5 @@
 appname               = auto-power
-version               = 1.0.7
+version               = 1.0.9
 display_name          = 远程电源管理
 platform              = x86
 source                = thirdparty

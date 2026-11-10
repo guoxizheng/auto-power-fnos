@@ -3,7 +3,7 @@
         "auto-power.Application": {
             "title": "远程电源管理",
             "icon": "images/icon_{0}.png",
-            "type": "url",
+            "type": "iframe",
             "protocol": "http",
             "port": "8465",
             "url": "/",

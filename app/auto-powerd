@@ -42,7 +42,7 @@ DEFAULT_CONFIG = {
     "poll_seconds": 10,
 }
 
-STATUS = {"state": "unknown", "idle_minutes": None, "auto_on": False, "boot_id": None, "log": [], "server": "ok"}
+STATUS = {"state": "unknown", "idle_minutes": None, "auto_on": False, "boot_id": None, "log": [], "gpus": [], "server": "ok"}
 
 def setup_logger():
     logger = logging.getLogger("auto-power")
@@ -113,6 +113,28 @@ def send_wol_mac():
         LOGGER.error("WOL 发送失败: %s", e); return 0
     return sent
 
+def query_gpus():
+    """查询远程主机显卡状态 (失败返回空列表, 不影响主流程)"""
+    rc, out, err = ssh_exec("nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,"
+                            "memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null")
+    gpus = []
+    if rc == 0:
+        for line in out.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 5:
+                try:
+                    gpus.append({
+                        "name": parts[0],
+                        "temp": int(parts[1]),      # 温度 C
+                        "util": int(parts[2]),       # 使用率 %
+                        "mem_used": int(parts[3]),   # 显存 MB
+                        "mem_total": int(parts[4]),
+                    })
+                except (ValueError, IndexError):
+                    continue
+    return gpus
+
+
 def update_status():
     rc, out, err = ssh_exec("cat /proc/sys/kernel/random/boot_id; "
                             "echo '---UPTIKE---'; uptime -s 2>/dev/null || echo unknown; "
@@ -135,6 +157,8 @@ def update_status():
         LOGGER.info("状态更新成功, boot_id=%s", STATUS["boot_id"])
     else:
         LOGGER.error("查询状态失败 rc=%d", rc)
+    # 显卡状态独立查询, 失败不影响主流程
+    STATUS["gpus"] = query_gpus()
 
 def set_idle_minutes(mins):
     rc, out, err = ssh_exec("echo 'gxz145890' | sudo -S /usr/local/bin/auto-powerctl setidle %s 2>&1" % int(mins))
@@ -166,7 +190,7 @@ def monitor_thread():
             if online:
                 STATUS["state"] = "online"; update_status()
             else:
-                STATUS["state"] = "offline"
+                STATUS["state"] = "offline"; STATUS["gpus"] = []  # 离线清空, 避免显示过期温度
             time.sleep(CONFIG["poll_seconds"])
         except Exception as e:
             LOGGER.error("轮询异常: %s", e); time.sleep(30)

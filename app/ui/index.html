@@ -39,22 +39,22 @@
     <div class="container">
         <div class="header">
             <h1>远程电源管理</h1>
-            <p>控制远程主机的休眠与唤醒</p>
+            <p>控制远程主机的关机/休眠与唤醒</p>
         </div>
         <div class="card">
             <div class="card-title">远程主机状态</div>
             <div class="status-grid">
                 <div class="status-item"><div class="label">连接状态</div><div class="value" id="state-value">检测中...</div></div>
                 <div class="status-item"><div class="label">空闲时间</div><div class="value" id="idle-value">-- 分钟</div></div>
-                <div class="status-item"><div class="label">自动休眠</div><div class="value" id="auto-value">已停止</div></div>
+                <div class="status-item"><div class="label">电源模式</div><div class="value" id="auto-value">--</div></div>
                 <div class="status-item"><div class="label">boot_id</div><div class="value" id="boot-id-value" style="font-size:0.9rem">--</div></div>
                 <div class="status-item"><div class="label">显卡温度</div><div class="value" id="gpu-value">--</div></div>
             </div>
         </div>
         <div class="card">
-            <div class="card-title">休眠时间设置</div>
+            <div class="card-title">空闲超时设置</div>
             <div class="form-group">
-                <label>空闲超过 N 分钟后自动休眠</label>
+                <label>空闲超过 N 分钟后自动 <span id="mode-label">关机/休眠</span></label>
                 <input type="number" id="idle-minutes" min="1" max="1440" value="30">
             </div>
             <div class="btn-group">
@@ -64,7 +64,7 @@
         <div class="card">
             <div class="card-title">立即操作</div>
             <div class="btn-group">
-                <button class="btn btn-danger" onclick="manualHibernate()">立即休眠</button>
+                <button class="btn btn-danger" id="hib-btn" onclick="manualHibernate()">立即关机/休眠</button>
                 <button class="btn btn-success" onclick="wakeOnLan()">WOL 恢复</button>
                 <button class="btn btn-info" onclick="checkStatus()">刷新状态</button>
             </div>
@@ -73,8 +73,8 @@
             <div class="card-title">自动电源管理</div>
             <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0">
                 <div>
-                    <div style="font-size:0.95rem;color:#555;">启用自动休眠/唤醒</div>
-                    <div style="font-size:0.85rem;color:#888;">启用后空闲超时 главных会自动休眠</div>
+                    <div style="font-size:0.95rem;color:#555;">启用自动关机/唤醒</div>
+                    <div style="font-size:0.85rem;color:#888;">启用后空闲超时的主机会自动关机/休眠</div>
                 </div>
                 <label class="toggle-switch"><input type="checkbox" id="auto-toggle" onchange="toggleAuto(this.checked)"><span class="slider"></span></label>
             </div>
@@ -92,6 +92,8 @@
                 return await resp.json();
             }catch(e){return {code:-1,msg:"网络请求失败: "+e.message,data:null}}
         }
+        let lastActionWord="关机/休眠";   // 缓存当前模式动作词, 供按钮/提示同步
+        let idleSynced=false;             // 输入框是否已同步过远程阈值(只同步一次, 不覆盖用户输入)
         async function refreshStatus(){
             const r=await apiCall("/api/status");
             if(r.code!==0){return}
@@ -100,6 +102,19 @@
             stateEl.textContent=s.state==="online"?"在线":"离线";
             stateEl.className="value "+(s.state==="online"?"online":"offline");
             document.getElementById("boot-id-value").textContent=s.boot_id?s.boot_id.slice(0,8):"--";
+            // 电源模式同步: 按钮文案 / 标签 / 输入框默认值
+            const pm=s.power_mode;
+            if(pm==="poweroff"||pm==="hibernate"){
+                lastActionWord=pm==="poweroff"?"关机":"休眠";
+                const btn=document.getElementById("hib-btn");
+                if(btn)btn.textContent="立即"+lastActionWord;
+                const ml=document.getElementById("mode-label");
+                if(ml)ml.textContent=lastActionWord;
+                const av=document.getElementById("auto-value");
+                if(av){av.textContent=lastActionWord+"模式";av.className="value online"}
+            }
+            const inp=document.getElementById("idle-minutes");
+            if(inp&&!idleSynced&&s.idle_limit){inp.value=s.idle_limit;idleSynced=true;}
             // 显卡温度 (多卡逐行显示, >=85C 标红, 离线时清空)
             const gpuEl=document.getElementById("gpu-value");
             if(s.gpus&&s.gpus.length>0){
@@ -118,14 +133,14 @@
         async function setIdleMinutes(){
             const mins=document.getElementById("idle-minutes").value;
             const r=await apiCall("/api/set-idle",{minutes:mins});
-            if(r.code===0){alert("设置成功: 空闲 "+mins+" 分钟后自动休眠")}
+            if(r.code===0){alert("设置成功: 空闲 "+mins+" 分钟后自动"+lastActionWord)}
             else{alert("设置失败: "+r.msg)}
         }
         async function manualHibernate(){
-            if(!confirm("确认要立即休眠远程主机吗？"))return;
+            if(!confirm("确认要立即"+lastActionWord+"远程主机吗？"))return;
             const r=await apiCall("/api/manual-hibernate");
-            if(r.code===0){alert("休眠指令已发送");setTimeout(refreshStatus,2000)}
-            else alert("休眠失败: "+r.msg);
+            if(r.code===0){alert(lastActionWord+"指令已发送");setTimeout(refreshStatus,2000)}
+            else alert(lastActionWord+"失败: "+r.msg);
         }
         async function wakeOnLan(){
             if(!confirm("确认要发送 WOL 魔法包唤醒主机吗？"))return;
@@ -135,9 +150,7 @@
         }
         async function toggleAuto(on){
             const r=await apiCall("/api/toggle",{on:on?1:0});
-            if(r.code===0){
-                document.getElementById("auto-value").textContent=on?"已启用":"已停止";
-            }else{alert("操作失败: "+r.msg);document.getElementById("auto-toggle").checked=!on}
+            if(r.code!==0){alert("操作失败: "+r.msg);document.getElementById("auto-toggle").checked=!on}
         }
         if(location.hash==="#status")refreshStatus();
         else setInterval(refreshStatus,5000);

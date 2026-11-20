@@ -1,5 +1,5 @@
 appname               = auto-power
-version               = 1.0.9
+version               = 1.1.0
 display_name          = 远程电源管理
 platform              = x86
 source                = thirdparty
@@ -10,5 +10,5 @@ desktop_uidir         = ui
 desktop_applaunchname = auto-power.Application
 service_port          = 8465
 ctl_stop              = true
-desc                  = 远程电源管理软件：支持自动休眠/WOL唤醒/手动控制/状态监控，可通过Web UI管理远程主机
-changelog             = 初始化版本
+desc                  = 远程电源管理软件：支持空闲自动关机/休眠、WOL唤醒、手动控制与GPU温度监控，可通过Web UI管理远程主机
+changelog             = 同步远程主机的电源模式(关机/休眠)：状态页显示当前模式，按钮与提示文案随模式自动切换；空闲阈值输入框自动同步远程配置
